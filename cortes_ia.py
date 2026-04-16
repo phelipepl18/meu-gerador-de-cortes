@@ -21,7 +21,6 @@ except Exception:
 
 st.title("🚀 Estrategista de Cortes Virais")
 
-# Função para converter "01:40" ou "100" em segundos (float)
 def processar_tempo(texto):
     try:
         texto = texto.strip().replace(",", ".")
@@ -76,40 +75,52 @@ if uploaded_file:
             st.write(st.session_state['analise_viral'])
 
     with col2:
-        st.subheader("2. Gerar o Corte")
-        st.info("Digite como a IA sugeriu (ex: 01:40) ou em segundos (ex: 100)")
+        st.subheader("2. Ajuste do Corte e Foco")
         
-        t_inicio_input = st.text_input("Início do corte", value="0", key="start_raw")
-        t_fim_input = st.text_input("Fim do corte", value="15", key="end_raw")
+        # Inputs de Tempo
+        t_inicio_input = st.text_input("Início do corte (ex: 01:10)", value="0", key="start_raw")
+        t_fim_input = st.text_input("Fim do corte (ex: 01:45)", value="15", key="end_raw")
         
-        if st.button("Cortar Vídeo Agora"):
+        st.divider()
+        
+        # NOVO: Controle de Foco (Câmera Virtual)
+        st.write("📽️ **Ajuste o foco da câmera (Face Tracking Manual)**")
+        foco_pos = st.slider("Esquerda <---> Direita", -1.0, 1.0, 0.0, 0.1, help="Use isso para centralizar a pessoa que está falando.")
+        
+        if st.button("Gerar Vídeo com Foco Selecionado"):
             t_inicio = processar_tempo(t_inicio_input)
             t_fim = processar_tempo(t_fim_input)
             
             if t_inicio is None or t_fim is None:
-                st.error("Formato de tempo inválido! Use 01:30 ou 90")
+                st.error("Formato de tempo inválido!")
             elif t_fim <= t_inicio:
                 st.error("O fim deve ser maior que o início!")
             else:
-                with st.spinner(f"Processando vídeo vertical..."):
+                with st.spinner("Cortando e enquadrando falante..."):
                     try:
                         with VideoFileClip(temp_path) as video_full:
-                            # Realiza o corte exato
                             video_cut = video_full.subclip(t_inicio, t_fim)
                             
-                            # Ajuste 9:16 (Lógica para números pares)
+                            # Lógica de Enquadramento 9:16
                             w, h = video_cut.size
                             target_w = int(h * (9/16))
                             if target_w % 2 != 0: target_w -= 1
                             
-                            final_video = video_cut.crop(x_center=w/2, width=target_w, height=h)
+                            # Cálculo do centro com base no Slider
+                            centro_original = w / 2
+                            # Distância máxima que o corte pode "correr" para os lados
+                            margem_movimento = (w - target_w) / 2
+                            novo_centro = centro_original + (margem_movimento * foco_pos)
                             
-                            output_name = "resultado_corte.mp4"
+                            # Aplica o corte focado
+                            final_video = video_cut.crop(x_center=novo_centro, width=target_w, height=h)
+                            
+                            output_name = "corte_focado.mp4"
                             final_video.write_videofile(
                                 output_name,
                                 codec="libx264",
                                 audio_codec="aac",
-                                bitrate="2000k", # Bitrate menor para carregar mais rápido no player
+                                bitrate="2500k",
                                 fps=24,
                                 preset="ultrafast",
                                 ffmpeg_params=["-pix_fmt", "yuv420p"]
@@ -117,7 +128,7 @@ if uploaded_file:
 
                             st.video(output_name)
                             with open(output_name, "rb") as f:
-                                st.download_button("⬇️ Baixar Vídeo", f, file_name="corte_viral.mp4")
+                                st.download_button("⬇️ Baixar Corte Focado", f, file_name="corte_viral.mp4")
                             
                             final_video.close()
                             video_cut.close()
@@ -125,3 +136,5 @@ if uploaded_file:
 
                     except Exception as e:
                         st.error(f"Erro ao processar: {e}")
+
+st.info("💡 Dica: Se no vídeo original a pessoa está na esquerda, mova o slider para a esquerda. Se houver duas pessoas, use o slider para escolher qual delas quer focar no corte.")
