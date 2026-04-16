@@ -1,5 +1,8 @@
 import streamlit as st
-from moviepy.editor import VideoFileClip, clips_array
+import PIL.Image
+if not hasattr(PIL.Image, 'ANTIALIAS'):
+    PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
+    from moviepy.editor import VideoFileClip, clips_array
 from groq import Groq
 import os
 import gc
