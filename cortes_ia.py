@@ -7,6 +7,12 @@ import gc
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="Gerador de Cortes Virais", layout="wide")
 
+st.markdown("""
+    <style>
+    .stVideo { width: 100%; max-width: 400px; margin: auto; }
+    </style>
+    """, unsafe_allow_html=True)
+
 # 2. CONEXÃO COM A GROQ
 try:
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
@@ -15,11 +21,22 @@ except Exception:
 
 st.title("🚀 Estrategista de Cortes Virais")
 
+# Função para converter "01:40" ou "100" em segundos (float)
+def processar_tempo(texto):
+    try:
+        texto = texto.strip().replace(",", ".")
+        if ":" in texto:
+            partes = texto.split(":")
+            if len(partes) == 2:
+                return float(partes[0]) * 60 + float(partes[1])
+        return float(texto)
+    except:
+        return None
+
 # 3. UPLOAD DO VÍDEO
 uploaded_file = st.file_uploader("Suba seu vídeo original", type=["mp4", "mov", "avi"])
 
 if uploaded_file:
-    # Salva o arquivo fisicamente para o MoviePy não se perder
     temp_path = "video_original_temp.mp4"
     with open(temp_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
@@ -29,7 +46,7 @@ if uploaded_file:
     with col1:
         st.subheader("1. Análise da IA")
         if st.button("Analisar Momentos Virais"):
-            with st.spinner("IA analisando..."):
+            with st.spinner("IA analisando ganchos..."):
                 try:
                     clip_audio = VideoFileClip(temp_path)
                     clip_audio.audio.write_audiofile("audio_temp.mp3", codec='libmp3lame')
@@ -41,7 +58,7 @@ if uploaded_file:
                             response_format="text"
                         )
                     
-                    prompt = f"Analise o texto e dê 3 sugestões de cortes com tempo de início e fim em segundos: {transcription}"
+                    prompt = f"Analise o texto e sugira 3 cortes virais com tempo de início e fim. Use o formato MM:SS (ex: 01:40). Texto: {transcription}"
                     
                     chat_completion = client.chat.completions.create(
                         messages=[{"role": "user", "content": prompt}],
@@ -60,23 +77,27 @@ if uploaded_file:
 
     with col2:
         st.subheader("2. Gerar o Corte")
+        st.info("Digite como a IA sugeriu (ex: 01:40) ou em segundos (ex: 100)")
         
-        # Usamos chaves (keys) para garantir que o Streamlit capture o valor certo
-        t_inicio = st.number_input("Início exato (segundos)", min_value=0.0, step=0.1, key="start_val")
-        t_fim = st.number_input("Fim exato (segundos)", min_value=0.1, step=0.1, key="end_val")
+        t_inicio_input = st.text_input("Início do corte", value="0", key="start_raw")
+        t_fim_input = st.text_input("Fim do corte", value="15", key="end_raw")
         
         if st.button("Cortar Vídeo Agora"):
-            if t_fim <= t_inicio:
-                st.error("O tempo de fim deve ser maior que o de início!")
+            t_inicio = processar_tempo(t_inicio_input)
+            t_fim = processar_tempo(t_fim_input)
+            
+            if t_inicio is None or t_fim is None:
+                st.error("Formato de tempo inválido! Use 01:30 ou 90")
+            elif t_fim <= t_inicio:
+                st.error("O fim deve ser maior que o início!")
             else:
-                with st.spinner(f"Cortando de {t_inicio}s até {t_fim}s..."):
+                with st.spinner(f"Processando vídeo vertical..."):
                     try:
-                        # Forçamos a recarga do clipe para garantir o tempo limpo
                         with VideoFileClip(temp_path) as video_full:
-                            # O segredo está aqui: subclip(inicio, fim)
+                            # Realiza o corte exato
                             video_cut = video_full.subclip(t_inicio, t_fim)
                             
-                            # Ajuste 9:16 (Par)
+                            # Ajuste 9:16 (Lógica para números pares)
                             w, h = video_cut.size
                             target_w = int(h * (9/16))
                             if target_w % 2 != 0: target_w -= 1
@@ -88,7 +109,7 @@ if uploaded_file:
                                 output_name,
                                 codec="libx264",
                                 audio_codec="aac",
-                                bitrate="3000k",
+                                bitrate="2000k", # Bitrate menor para carregar mais rápido no player
                                 fps=24,
                                 preset="ultrafast",
                                 ffmpeg_params=["-pix_fmt", "yuv420p"]
@@ -96,16 +117,11 @@ if uploaded_file:
 
                             st.video(output_name)
                             with open(output_name, "rb") as f:
-                                st.download_button("⬇️ Baixar Corte", f, file_name="corte.mp4")
+                                st.download_button("⬇️ Baixar Vídeo", f, file_name="corte_viral.mp4")
                             
-                            # Fechar tudo para liberar o arquivo
                             final_video.close()
                             video_cut.close()
                             gc.collect()
 
                     except Exception as e:
                         st.error(f"Erro ao processar: {e}")
-
-# Limpeza de segurança
-if os.path.exists("resultado_corte.mp4") and not uploaded_file:
-    os.remove("resultado_corte.mp4")
