@@ -1,105 +1,99 @@
 import streamlit as st
 from moviepy.editor import VideoFileClip
-from openai import OpenAI
+from groq import Groq
 import os
 import gc
-import re
 
 # 1. CONFIGURAÇÃO DA PÁGINA
-st.set_page_config(page_title="Gerador de Cortes Virais IA", layout="wide")
+st.set_page_config(page_title="Cortes Virais Grátis (Groq)", layout="wide")
 
-# 2. CONEXÃO COM A OPENAI
+# 2. CONEXÃO COM A GROQ
 try:
-    client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 except Exception:
-    st.error("⚠️ Erro: Chave da OpenAI não encontrada!")
+    st.error("⚠️ Erro: Configure GROQ_API_KEY nos Secrets do Streamlit!")
 
-st.title("🚀 Estrategista de Cortes Virais")
+st.title("🚀 Gerador de Cortes Virais (Versão Grátis)")
 
 # 3. UPLOAD
-uploaded_file = st.file_uploader("Suba seu vídeo para análise", type=["mp4", "mov", "avi"])
+uploaded_file = st.file_uploader("Suba seu vídeo", type=["mp4", "mov", "avi"])
 
 if uploaded_file:
-    temp_path = "video_original_temp.mp4"
+    temp_path = "video_temp.mp4"
     with open(temp_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
 
     col1, col2 = st.columns([1, 1])
 
     with col1:
-        st.subheader("1. Inteligência de Conteúdo")
-        if st.button("Analisar Momentos Virais"):
-            with st.spinner("IA analisando o melhor gancho..."):
+        st.subheader("1. Análise de Inteligência")
+        if st.button("Analisar Momentos Virais (Grátis)"):
+            with st.spinner("Groq transcrevendo e analisando..."):
                 try:
-                    # Transcrição
-                    clip_audio = VideoFileClip(temp_path)
-                    clip_audio.audio.write_audiofile("audio_temp.mp3", codec='libmp3lame')
+                    # Extrair Áudio
+                    clip = VideoFileClip(temp_path)
+                    clip.audio.write_audiofile("audio_temp.mp3", codec='libmp3lame')
                     
-                    with open("audio_temp.mp3", "rb") as audio_f:
-                        transcript = client.audio.transcriptions.create(
-                            model="whisper-1", 
-                            file=audio_f,
+                    # Transcrever com Whisper na Groq
+                    with open("audio_temp.mp3", "rb") as audio_file:
+                        transcription = client.audio.transcriptions.create(
+                            file=("audio_temp.mp3", audio_file.read()),
+                            model="whisper-large-v3",
                             response_format="text"
                         )
                     
-                    # PEDIR PARA A IA SUGERIR CORTES
-                    prompt = f"Com base nesta transcrição de vídeo, identifique os 3 momentos mais virais, engraçados ou impactantes. Para cada momento, forneça um título e o tempo estimado de início e fim em segundos. Transcrição: {transcript}"
+                    # Analisar Momentos com Llama 3 na Groq
+                    prompt = f"Analise o texto abaixo e me dê os 3 momentos mais virais. Para cada um, dê o tempo inicial e final em segundos e um motivo. Texto: {transcription}"
                     
-                    response = client.chat.completions.create(
-                        model="gpt-4o", # Ou gpt-3.5-turbo
-                        messages=[{"role": "user", "content": prompt}]
+                    chat_completion = client.chat.completions.create(
+                        messages=[{"role": "user", "content": prompt}],
+                        model="llama3-8b-8192",
                     )
                     
-                    st.session_state['analise_viral'] = response.choices[0].message.content
-                    st.session_state['transcricao'] = transcript
-                    clip_audio.close()
+                    st.session_state['analise'] = chat_completion.choices[0].message.content
+                    st.session_state['texto'] = transcription
+                    clip.close()
+                    os.remove("audio_temp.mp3")
                 except Exception as e:
-                    st.error(f"Erro: {e}")
+                    st.error(f"Erro no processamento: {e}")
 
-        if 'analise_viral' in st.session_state:
+        if 'analise' in st.session_state:
             st.success("🎯 Sugestões da IA:")
-            st.write(st.session_state['analise_viral'])
-            st.divider()
-            with st.expander("Ver transcrição completa"):
-                st.write(st.session_state['transcricao'])
+            st.write(st.session_state['analise'])
 
     with col2:
-        st.subheader("2. Gerar o Corte Escolhido")
-        st.info("Escolha um dos tempos sugeridos pela IA ao lado:")
+        st.subheader("2. Gerar Vídeo")
+        st_t = st.number_input("Início (seg)", value=0.0)
+        en_t = st.number_input("Fim (seg)", value=15.0)
         
-        c_start = st.number_input("Início (seg)", value=0.0)
-        c_end = st.number_input("Fim (seg)", value=15.0)
-        
-        if st.button("Gerar Vídeo Selecionado"):
-            with st.spinner("Criando corte em alta compatibilidade..."):
+        if st.button("Cortar e Converter 9:16"):
+            with st.spinner("Gerando vídeo vertical..."):
                 try:
-                    video = VideoFileClip(temp_path).subclip(c_start, c_end)
+                    video = VideoFileClip(temp_path).subclip(st_t, en_t)
                     
                     # Ajuste 9:16 Par
                     w, h = video.size
                     target_w = int(h * (9/16))
                     if target_w % 2 != 0: target_w -= 1
                     
-                    video_vertical = video.crop(x_center=w/2, width=target_w, height=h)
-
-                    output_name = "corte_viral_escolhido.mp4"
-                    video_vertical.write_videofile(
-                        output_name,
-                        codec="libx264",
-                        audio_codec="aac",
-                        bitrate="3000k",
-                        fps=24,
-                        preset="ultrafast",
+                    final = video.crop(x_center=w/2, width=target_w, height=h)
+                    
+                    out = "corte_final.mp4"
+                    final.write_videofile(
+                        out, codec="libx264", audio_codec="aac",
+                        bitrate="3000k", fps=24, preset="ultrafast",
                         ffmpeg_params=["-pix_fmt", "yuv420p"]
                     )
-
-                    st.video(output_name)
                     
-                    with open(output_name, "rb") as f:
-                        st.download_button("⬇️ Baixar Corte Viral", f, file_name="corte.mp4")
+                    st.video(out)
+                    with open(out, "rb") as f:
+                        st.download_button("⬇️ Baixar Vídeo", f, file_name="corte.mp4")
                     
                     video.close()
-                    video_vertical.close()
+                    final.close()
                     gc.collect()
                 except Exception as e:
                     st.error(f"Erro: {e}")
+
+# 4. ATUALIZAR REQUIREMENTS
+# Importante: No seu arquivo requirements.txt, adicione a linha: groq
