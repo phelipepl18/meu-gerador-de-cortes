@@ -5,6 +5,7 @@ import os
 import gc
 import json
 import re
+import random  # Para gerar nomes de arquivos únicos
 from PIL import Image, ImageDraw, ImageFont
 
 # --- CORREÇÃO ANTIALIAS ---
@@ -15,7 +16,7 @@ else:
     PIL.Image.ANTIALIAS = PIL.Image.Resampling.LANCZOS
     PIL.Image.LANCZOS = PIL.Image.Resampling.LANCZOS
 
-st.set_page_config(page_title="Gerador Automático de 3 Cortes Virais", layout="wide")
+st.set_page_config(page_title="Gerador de Cortes Profissional", layout="wide")
 
 try:
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
@@ -23,16 +24,22 @@ except:
     st.error("⚠️ Configure a GROQ_API_KEY nos Secrets!")
 
 def criar_imagem_texto(texto, largura=1080):
-    img = Image.new('RGBA', (largura, 250), (0, 0, 0, 0))
+    # Aumentei a altura para acomodar texto maior
+    img = Image.new('RGBA', (largura, 400), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", 80)
+        # Tenta carregar fonte negritada padrão do servidor Streamlit
+        # Aumentei o tamanho da fonte para 110 (era 80)
+        font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", 110)
     except:
         font = ImageFont.load_default()
     
+    # Desenha o texto centralizado com o novo tamanho
     w_txt, h_txt = draw.textbbox((0, 0), texto.upper(), font=font)[2:4]
-    draw.text(((largura - w_txt) / 2, (250 - h_txt) / 2), texto.upper(), font=font, fill="white")
-    path = f"titulo_{hash(texto)}.png"
+    draw.text(((largura - w_txt) / 2, (400 - h_txt) / 2), texto.upper(), font=font, fill="white")
+    
+    # Salva com nome aleatório para não usar cache
+    path = f"titulo_prof_{hash(texto)}{random.randint(0,999)}.png"
     img.save(path)
     return path
 
@@ -45,19 +52,38 @@ def processar_corte(video_path, bg_path, start, end, tema, output_name, duracao_
         clip = video.subclip(start, end)
         bg = ImageClip(bg_path).set_duration(clip.duration).resize(height=1920)
         bg = bg.crop(x_center=bg.w/2, y_center=bg.h/2, width=1080, height=1920)
+        
+        # Vídeo no Centro
         vid_centro = clip.resize(width=1000)
+        
+        # Tema Forte MAIOR e Tarja AJUSTADA (Mais larga e no topo)
         path_txt = criar_imagem_texto(tema)
-        txt_clip = ImageClip(path_txt).set_duration(clip.duration).set_position(('center', 400))
-        tarja = ColorClip(size=(1080, 200), color=(0,0,0)).set_opacity(0.6).set_duration(clip.duration).set_position(('center', 430))
+        
+        # Posicionamento do texto mais para o topo (posição 250)
+        txt_clip = ImageClip(path_txt).set_duration(clip.duration).set_position(('center', 250))
+        
+        # Tarja preta mais larga (400px) e no topo para ler melhor
+        tarja = ColorClip(size=(1080, 400), color=(0,0,0)).set_opacity(0.6).set_duration(clip.duration).set_position(('center', 250))
+        
         final = CompositeVideoClip([bg, tarja, txt_clip, vid_centro.set_position("center")])
         
-        if final.w % 2 != 0: final = final.margin(right=1)
-        if final.h % 2 != 0: final = final.margin(bottom=1)
+        # --- TRAVA DE SEGURANÇA DE DIMENSÕES PARES ---
+        # Garante que o player do Streamlit mostre o vídeo (dimensões múltiplas de 2)
+        final_w = final.w if final.w % 2 == 0 else final.w - 1
+        final_h = final.h if final.h % 2 == 0 else final.h - 1
+        final = final.crop(width=final_w, height=final_h, x_center=final.w/2, y_center=final.h/2)
+        # -----------------------------------------------
         
-        final.write_videofile(output_name, codec="libx264", audio_codec="aac", fps=24, preset="ultrafast", logger=None)
+        # logger=None para não travar no log
+        final.write_videofile(output_name, codec="libx264", audio_codec="aac", fps=24, preset="ultrafast", logger=None, threads=4)
+        
+    # Limpa arquivo de texto temporário
+    if os.path.exists(path_txt):
+        os.remove(path_txt)
+        
     return output_name
 
-st.title("🎙️ Gerador Automático de 3 Cortes Virais")
+st.title("🎙️ Gerador de 3 Cortes Profissionais")
 
 file = st.file_uploader("1. Suba seu vídeo original", type=["mp4", "mov", "avi"])
 bg_image = st.file_uploader("2. Suba a imagem de fundo", type=["jpg", "jpeg", "png"])
@@ -68,8 +94,12 @@ if file and bg_image:
     with open(temp_path, "wb") as f: f.write(file.getbuffer())
     with open(bg_path, "wb") as f: f.write(bg_image.getbuffer())
 
-    if st.button("🚀 Gerar 3 Vídeos Virais Automaticamente"):
-        with st.spinner("Analisando e Criando..."):
+    if st.button("🚀 Gerar 3 Cortes Profissionais"):
+        # Limpa vídeos antigos antes de começar para não confundir o Streamlit
+        for i in range(1, 4):
+            if os.path.exists(f"corte_v_{i}.mp4"): os.remove(f"corte_v_{i}.mp4")
+
+        with st.spinner("IA analisando e criando os vídeos profissionais..."):
             try:
                 with VideoFileClip(temp_path) as v_full:
                     duracao_total = v_full.duration
@@ -80,9 +110,9 @@ if file and bg_image:
                 
                 # Prompt agora informa a duração total para evitar erros
                 prompt = (
-                    f"O vídeo tem EXATAMENTE {duracao_total} segundos. "
-                    f"Escolha os 3 melhores momentos para cortes entre 0 e {duracao_total}. "
-                    f"Responda APENAS com um JSON puro: "
+                    f"O vídeo tem {duracao_total} seg. "
+                    f"Escolha os 3 melhores momentos para cortes curtos até esse limite. "
+                    f"Responda APENAS com um JSON puro, sem explicações: "
                     f"[{{\"inicio\": segundos, \"fim\": segundos, \"tema\": \"titulo\"}}]. "
                     f"Texto: {trans}"
                 )
@@ -94,17 +124,24 @@ if file and bg_image:
                 if match:
                     cortes = json.loads(match.group())
                 else:
-                    raise ValueError("Falha no formato da IA.")
+                    raise ValueError("Falha no formato JSON da IA.")
 
                 cols = st.columns(3)
                 for i, corte in enumerate(cortes[:3]):
-                    out_name = f"corte_{i+1}.mp4"
+                    # Nome de saída único para forçar a atualização no site
+                    out_name = f"corte_v_{i+1}_{random.randint(100,999)}.mp4"
+                    
                     # Passamos a duração total para a função de corte validar
                     processar_corte(temp_path, bg_path, corte['inicio'], corte['fim'], corte['tema'], out_name, duracao_total)
+                    
                     with cols[i]:
+                        st.info(f"Corte {i+1}: {corte['tema']}")
                         st.video(out_name)
                         with open(out_name, "rb") as f:
-                            st.download_button(f"Baixar {i+1}", f, out_name)
+                            st.download_button(f"Baixar Corte {i+1}", f, out_name)
+                
+                # Coletor de lixo para liberar memória
                 gc.collect()
+                st.success("Cortes gerados com sucesso!")
             except Exception as e:
-                st.error(f"Erro: {e}")
+                st.error(f"Erro na geração: {e}")
