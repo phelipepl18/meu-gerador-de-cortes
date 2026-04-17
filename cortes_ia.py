@@ -4,7 +4,7 @@ from groq import Groq
 import os
 import gc
 import json
-import re  # Novo: para limpar a resposta da IA
+import re
 from PIL import Image, ImageDraw, ImageFont
 
 # --- CORREÇÃO ANTIALIAS ---
@@ -36,9 +36,13 @@ def criar_imagem_texto(texto, largura=1080):
     img.save(path)
     return path
 
-def processar_corte(video_path, bg_path, start, end, tema, output_name):
+def processar_corte(video_path, bg_path, start, end, tema, output_name, duracao_max):
+    # Ajuste de segurança: garante que o tempo não passe do vídeo
+    start = max(0, min(start, duracao_max - 2))
+    end = max(start + 1, min(end, duracao_max))
+    
     with VideoFileClip(video_path) as video:
-        clip = video.subclip(max(0, start), min(end, video.duration))
+        clip = video.subclip(start, end)
         bg = ImageClip(bg_path).set_duration(clip.duration).resize(height=1920)
         bg = bg.crop(x_center=bg.w/2, y_center=bg.h/2, width=1080, height=1920)
         vid_centro = clip.resize(width=1000)
@@ -46,8 +50,10 @@ def processar_corte(video_path, bg_path, start, end, tema, output_name):
         txt_clip = ImageClip(path_txt).set_duration(clip.duration).set_position(('center', 400))
         tarja = ColorClip(size=(1080, 200), color=(0,0,0)).set_opacity(0.6).set_duration(clip.duration).set_position(('center', 430))
         final = CompositeVideoClip([bg, tarja, txt_clip, vid_centro.set_position("center")])
+        
         if final.w % 2 != 0: final = final.margin(right=1)
         if final.h % 2 != 0: final = final.margin(bottom=1)
+        
         final.write_videofile(output_name, codec="libx264", audio_codec="aac", fps=24, preset="ultrafast", logger=None)
     return output_name
 
@@ -66,14 +72,17 @@ if file and bg_image:
         with st.spinner("Analisando e Criando..."):
             try:
                 with VideoFileClip(temp_path) as v_full:
+                    duracao_total = v_full.duration
                     v_full.audio.write_audiofile("audio.mp3", codec='libmp3lame', logger=None)
                 
                 with open("audio.mp3", "rb") as a:
                     trans = client.audio.transcriptions.create(file=("audio.mp3", a.read()), model="whisper-large-v3-turbo", response_format="text")
                 
+                # Prompt agora informa a duração total para evitar erros
                 prompt = (
-                    f"Analise o texto e escolha os 3 melhores momentos para cortes curtos (30 a 60 seg). "
-                    f"Responda APENAS com um JSON puro, sem explicações, no formato: "
+                    f"O vídeo tem EXATAMENTE {duracao_total} segundos. "
+                    f"Escolha os 3 melhores momentos para cortes entre 0 e {duracao_total}. "
+                    f"Responda APENAS com um JSON puro: "
                     f"[{{\"inicio\": segundos, \"fim\": segundos, \"tema\": \"titulo\"}}]. "
                     f"Texto: {trans}"
                 )
@@ -81,17 +90,17 @@ if file and bg_image:
                 res = client.chat.completions.create(messages=[{"role":"user","content":prompt}], model="llama-3.1-8b-instant")
                 conteudo = res.choices[0].message.content
                 
-                # LIMPADOR DE JSON: Encontra o que está entre [ e ]
                 match = re.search(r'\[.*\]', conteudo, re.DOTALL)
                 if match:
                     cortes = json.loads(match.group())
                 else:
-                    raise ValueError("A IA não retornou um formato de lista válido.")
+                    raise ValueError("Falha no formato da IA.")
 
                 cols = st.columns(3)
                 for i, corte in enumerate(cortes[:3]):
                     out_name = f"corte_{i+1}.mp4"
-                    processar_corte(temp_path, bg_path, corte['inicio'], corte['fim'], corte['tema'], out_name)
+                    # Passamos a duração total para a função de corte validar
+                    processar_corte(temp_path, bg_path, corte['inicio'], corte['fim'], corte['tema'], out_name, duracao_total)
                     with cols[i]:
                         st.video(out_name)
                         with open(out_name, "rb") as f:
